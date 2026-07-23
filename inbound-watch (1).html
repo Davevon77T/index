@@ -1,0 +1,487 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Inbound Watch — FL74</title>
+<style>
+  :root{
+    --bg:#0d1210;
+    --panel:#131a17;
+    --panel-raised:#182019;
+    --border:#233128;
+    --border-bright:#31463a;
+    --text:#e7ede9;
+    --text-dim:#8fa39a;
+    --text-faint:#5a6d64;
+    --amber:#e8a33d;
+    --amber-dim:#7a5a26;
+    --green:#5ee38c;
+    --green-dim:#2c5c3f;
+    --red:#e4572e;
+    --red-dim:#5c2c1e;
+    --font-display: "Courier New", ui-monospace, monospace;
+    --font-body: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+    --font-mono: ui-monospace, "SF Mono", "Cascadia Code", "Roboto Mono", Consolas, monospace;
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color: transparent;}
+  html,body{margin:0;padding:0;background:var(--bg);color:var(--text);font-family:var(--font-body);}
+  body{padding-bottom:env(safe-area-inset-bottom);}
+  .app{max-width:520px;margin:0 auto;padding:14px 14px calc(14px + env(safe-area-inset-bottom));min-height:100vh;}
+
+  header{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:10px;padding:0 2px;}
+  header .title{font-family:var(--font-display);letter-spacing:0.5px;font-size:19px;font-weight:700;color:var(--green);}
+  header .sub{font-size:11px;color:var(--text-faint);font-family:var(--font-mono);}
+  .gear{background:none;border:1px solid var(--border);color:var(--text-dim);border-radius:8px;padding:6px 10px;font-size:16px;line-height:1;}
+  .gear:active{background:var(--panel-raised);}
+
+  .status-bar{display:flex;justify-content:space-between;align-items:center;font-family:var(--font-mono);font-size:11px;color:var(--text-faint);padding:2px 4px 10px;}
+  .status-bar .dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--green);margin-right:5px;box-shadow:0 0 6px var(--green);}
+  .status-bar .dot.stale{background:var(--amber);box-shadow:0 0 6px var(--amber);}
+  .status-bar .dot.err{background:var(--red);box-shadow:0 0 6px var(--red);}
+
+  .scope-wrap{position:relative;width:100%;aspect-ratio:1/1;background:radial-gradient(circle at 50% 50%, #0f1613 0%, #0a0f0d 100%);border:1px solid var(--border);border-radius:16px;overflow:hidden;margin-bottom:12px;}
+  svg.scope{width:100%;height:100%;display:block;}
+  .ring{fill:none;stroke:var(--border-bright);stroke-width:1;opacity:0.55;}
+  .ring-label{fill:var(--text-faint);font-family:var(--font-mono);font-size:9px;}
+  .crosshair{stroke:var(--border-bright);stroke-width:1;opacity:0.4;}
+  .home-dot{fill:var(--amber);}
+  .sweep-line{stroke:var(--green);stroke-width:1.2;opacity:0.5;}
+  .sweep-fade{fill:url(#sweepGrad);}
+  .blip{transition:cx 0.6s linear, cy 0.6s linear;}
+  .blip-inbound{fill:var(--red);}
+  .blip-normal{fill:var(--text-dim);}
+  .blip-track{stroke-width:1.4;}
+  .blip-track.inbound{stroke:var(--red);}
+  .blip-track.normal{stroke:var(--text-faint);}
+  .blip-label{font-family:var(--font-mono);font-size:8.5px;fill:var(--text-dim);}
+  .blip-label.inbound{fill:var(--red);font-weight:700;}
+
+  .banner{display:none;padding:10px 12px;border-radius:10px;background:var(--red-dim);border:1px solid var(--red);color:#ffd9cd;font-size:13px;font-weight:600;margin-bottom:12px;align-items:center;gap:8px;}
+  .banner.show{display:flex;}
+  .banner .icon{font-size:16px;}
+
+  .list-head{font-family:var(--font-mono);font-size:10px;color:var(--text-faint);display:grid;grid-template-columns:1.5fr 0.8fr 0.9fr 0.9fr 1.1fr;padding:0 12px 6px;}
+  .row{display:grid;grid-template-columns:1.5fr 0.8fr 0.9fr 0.9fr 1.1fr;align-items:center;background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin-bottom:7px;font-family:var(--font-mono);font-size:12.5px;}
+  .row.inbound{border-color:var(--red);background:linear-gradient(90deg, var(--red-dim), var(--panel) 55%);}
+  .row .call{font-weight:700;color:var(--text);}
+  .row .type{display:block;font-size:10px;color:var(--text-faint);font-weight:400;}
+  .row .badge{font-size:9.5px;font-weight:700;padding:2px 6px;border-radius:5px;background:var(--green-dim);color:var(--green);justify-self:start;}
+  .row.inbound .badge{background:var(--red);color:#fff;}
+  .empty{text-align:center;color:var(--text-faint);font-size:13px;padding:30px 10px;font-family:var(--font-mono);}
+
+  .settings{display:none;background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:14px;margin-bottom:12px;}
+  .settings.show{display:block;}
+  .settings label{display:block;font-size:11px;color:var(--text-faint);margin-bottom:3px;font-family:var(--font-mono);}
+  .settings .field{margin-bottom:10px;}
+  .settings input{width:100%;background:var(--panel-raised);border:1px solid var(--border-bright);color:var(--text);border-radius:8px;padding:8px 10px;font-family:var(--font-mono);font-size:13px;}
+  .settings .row2{display:flex;gap:10px;}
+  .settings .row2 .field{flex:1;}
+  .settings .hint{font-size:11px;color:var(--text-faint);margin-top:6px;line-height:1.4;}
+  .btn{background:var(--green-dim);color:var(--green);border:1px solid var(--green);border-radius:8px;padding:9px;font-size:13px;font-weight:700;width:100%;margin-top:4px;}
+  .btn:active{opacity:0.8;}
+  .toggle-row{display:flex;align-items:center;justify-content:space-between;background:var(--panel-raised);border:1px solid var(--border-bright);border-radius:8px;padding:9px 10px;margin-bottom:8px;}
+  .toggle-row .lbl{font-size:12.5px;}
+  .toggle-row .sub2{display:block;font-size:10px;color:var(--text-faint);margin-top:1px;}
+  .toggle-btn{background:var(--panel);border:1px solid var(--border-bright);color:var(--text-dim);border-radius:6px;padding:6px 11px;font-size:11.5px;font-weight:700;font-family:var(--font-mono);}
+  .toggle-btn.on{background:var(--green-dim);border-color:var(--green);color:var(--green);}
+  .facing-mark{fill:var(--amber);font-family:var(--font-mono);font-size:10px;font-weight:700;text-anchor:middle;}
+  .compass-label{fill:var(--text-dim);font-family:var(--font-mono);font-size:9.5px;font-weight:700;text-anchor:middle;}
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <div>
+      <div class="title">INBOUND WATCH</div>
+      <div class="sub" id="homeLabel">FL74 · Indian River Aerodrome</div>
+    </div>
+    <button class="gear" id="gearBtn">⚙</button>
+  </header>
+
+  <div class="status-bar">
+    <div><span class="dot" id="statusDot"></span><span id="statusText">connecting…</span></div>
+    <div id="countText">0 aircraft in range</div>
+  </div>
+
+  <div class="banner" id="banner"><span class="icon">✈</span><span id="bannerText"></span></div>
+
+  <div class="settings" id="settings">
+    <div class="toggle-row">
+      <div class="lbl">Use my current location<span class="sub2" id="gpsStatus">off — using coordinates below</span></div>
+      <button class="toggle-btn" id="gpsToggle">Enable</button>
+    </div>
+    <div class="toggle-row">
+      <div class="lbl">Rotate display to match facing<span class="sub2" id="compassStatus">off — north stays up</span></div>
+      <button class="toggle-btn" id="compassToggle">Enable</button>
+    </div>
+    <div class="row2">
+      <div class="field"><label>Home latitude</label><input id="lat" inputmode="decimal" value="27.5986"></div>
+      <div class="field"><label>Home longitude</label><input id="lon" inputmode="decimal" value="-80.5020"></div>
+    </div>
+    <div class="row2">
+      <div class="field"><label>Search radius (nm)</label><input id="radius" inputmode="numeric" value="15"></div>
+      <div class="field"><label>Inbound cone (° ± )</label><input id="cone" inputmode="numeric" value="25"></div>
+    </div>
+    <div class="field"><label>Poll interval (seconds, min 3)</label><input id="poll" inputmode="numeric" value="6"></div>
+    <button class="btn" id="saveSettings">Save</button>
+    <div class="hint">Default home is set to FL74 (Indian River Aerodrome), 27.5986, -80.5020. Data from airplanes.live's free public ADS-B API — no key needed, non-commercial use, ~1 request/sec limit. Alerts only fire while this tab is open and in the foreground. Location and compass require this page to be loaded over https — they won't work from a downloaded file opened directly.</div>
+  </div>
+
+  <div class="scope-wrap">
+    <svg class="scope" viewBox="0 0 300 300">
+      <defs>
+        <radialGradient id="sweepGrad" cx="50%" cy="50%" r="50%">
+          <stop offset="0%" stop-color="#5ee38c" stop-opacity="0.16"/>
+          <stop offset="100%" stop-color="#5ee38c" stop-opacity="0"/>
+        </radialGradient>
+      </defs>
+      <circle cx="150" cy="150" r="46" class="ring"/>
+      <circle cx="150" cy="150" r="92" class="ring"/>
+      <circle cx="150" cy="150" r="138" class="ring"/>
+      <text x="153" y="107" class="ring-label" id="ringLabel1"></text>
+      <text x="153" y="61" class="ring-label" id="ringLabel2"></text>
+      <text x="153" y="15" class="ring-label" id="ringLabel3"></text>
+      <g id="sweep" class="sweep">
+        <path id="sweepPath" class="sweep-fade" d=""/>
+        <line x1="150" y1="150" x2="150" y2="12" class="sweep-line"/>
+      </g>
+      <g id="rotGroup">
+        <line x1="150" y1="10" x2="150" y2="290" class="crosshair"/>
+        <line x1="10" y1="150" x2="290" y2="150" class="crosshair"/>
+        <text x="150" y="20" class="compass-label" id="cN">N</text>
+        <text x="280" y="154" class="compass-label" id="cE">E</text>
+        <text x="150" y="285" class="compass-label" id="cS">S</text>
+        <text x="20" y="154" class="compass-label" id="cW">W</text>
+        <g id="blips"></g>
+      </g>
+      <circle cx="150" cy="150" r="4" class="home-dot"/>
+      <text x="150" y="9" class="facing-mark" id="facingMark"></text>
+    </svg>
+  </div>
+
+  <div class="list-head"><span>CALLSIGN</span><span>DIST</span><span>ALT</span><span>GS</span><span>STATUS</span></div>
+  <div id="list"></div>
+</div>
+
+<script>
+(function(){
+  const $ = (id) => document.getElementById(id);
+  let state = {
+    lat: 27.5986, lon: -80.5020, radiusNm: 15, coneDeg: 25, pollSec: 6,
+    useGps: false, compassMode: false, heading: 0,
+    tracked: {}, // hex -> {lastDist, alertedAt}
+  };
+  let gpsWatchId = null;
+  let manualLat = state.lat, manualLon = state.lon;
+
+  function loadSettings(){
+    try{
+      const s = JSON.parse(localStorage.getItem('iw_settings')||'{}');
+      Object.assign(state, s);
+    }catch(e){}
+    manualLat = state.lat; manualLon = state.lon;
+    $('lat').value = state.lat; $('lon').value = state.lon;
+    $('radius').value = state.radiusNm; $('cone').value = state.coneDeg; $('poll').value = state.pollSec;
+    if(state.useGps) startGps(); else setGpsUi(false);
+  }
+  function saveSettings(){
+    if(!state.useGps){
+      state.lat = parseFloat($('lat').value)||state.lat;
+      state.lon = parseFloat($('lon').value)||state.lon;
+      manualLat = state.lat; manualLon = state.lon;
+    }
+    state.radiusNm = Math.max(2, parseFloat($('radius').value)||15);
+    state.coneDeg = Math.max(5, parseFloat($('cone').value)||25);
+    state.pollSec = Math.max(3, parseFloat($('poll').value)||6);
+    localStorage.setItem('iw_settings', JSON.stringify({lat:manualLat,lon:manualLon,radiusNm:state.radiusNm,coneDeg:state.coneDeg,pollSec:state.pollSec,useGps:state.useGps}));
+    updateRingLabels();
+    $('settings').classList.remove('show');
+    restartPolling();
+  }
+
+  $('gearBtn').addEventListener('click', ()=> $('settings').classList.toggle('show'));
+  $('saveSettings').addEventListener('click', saveSettings);
+
+  function setGpsUi(on, msg){
+    $('gpsToggle').textContent = on ? 'Disable' : 'Enable';
+    $('gpsToggle').className = 'toggle-btn' + (on?' on':'');
+    $('gpsStatus').textContent = msg || (on ? 'live — using device location' : 'off — using coordinates below');
+    $('lat').disabled = on; $('lon').disabled = on;
+  }
+  function startGps(){
+    if(!('geolocation' in navigator)){
+      setGpsUi(false, 'not available on this browser');
+      return;
+    }
+    state.useGps = true;
+    setGpsUi(true, 'requesting…');
+    gpsWatchId = navigator.geolocation.watchPosition(
+      (pos)=>{
+        state.lat = pos.coords.latitude; state.lon = pos.coords.longitude;
+        setGpsUi(true, 'live — accurate to ~'+Math.round(pos.coords.accuracy)+'m');
+        updateRingLabels();
+      },
+      (err)=>{
+        state.useGps = false;
+        setGpsUi(false, 'denied/unavailable ('+err.message+') — using coordinates below');
+        state.lat = manualLat; state.lon = manualLon;
+        updateRingLabels();
+      },
+      {enableHighAccuracy:true, maximumAge:2000, timeout:12000}
+    );
+  }
+  function stopGps(){
+    if(gpsWatchId!==null){ navigator.geolocation.clearWatch(gpsWatchId); gpsWatchId=null; }
+    state.useGps = false;
+    state.lat = manualLat; state.lon = manualLon;
+    setGpsUi(false);
+    updateRingLabels();
+  }
+  $('gpsToggle').addEventListener('click', ()=>{
+    if(state.useGps) stopGps(); else startGps();
+    restartPolling();
+  });
+
+  function setCompassUi(on, msg){
+    $('compassToggle').textContent = on ? 'Disable' : 'Enable';
+    $('compassToggle').className = 'toggle-btn' + (on?' on':'');
+    $('compassStatus').textContent = msg || (on ? 'on — facing direction stays up' : 'off — north stays up');
+  }
+  function onOrientation(ev){
+    let h = null;
+    if(typeof ev.webkitCompassHeading === 'number'){ h = ev.webkitCompassHeading; }
+    else if(ev.absolute && ev.alpha !== null){ h = (360 - ev.alpha) % 360; }
+    if(h !== null){
+      state.heading = h;
+      const rg = $('rotGroup');
+      if(state.compassMode) rg.setAttribute('transform', 'rotate('+(-h)+' 150 150)');
+    }
+  }
+  function enableCompass(){
+    const start = ()=>{
+      window.addEventListener('deviceorientation', onOrientation);
+      state.compassMode = true;
+      setCompassUi(true);
+      $('facingMark').textContent = '▲ facing';
+    };
+    if(typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function'){
+      DeviceOrientationEvent.requestPermission().then((resp)=>{
+        if(resp === 'granted') start();
+        else setCompassUi(false, 'permission denied');
+      }).catch(()=> setCompassUi(false, 'permission error — needs https'));
+    } else if('DeviceOrientationEvent' in window){
+      start();
+    } else {
+      setCompassUi(false, 'not supported on this browser');
+    }
+  }
+  function disableCompass(){
+    window.removeEventListener('deviceorientation', onOrientation);
+    state.compassMode = false;
+    $('rotGroup').setAttribute('transform','');
+    $('facingMark').textContent = '';
+    setCompassUi(false);
+  }
+  $('compassToggle').addEventListener('click', ()=>{
+    if(state.compassMode) disableCompass(); else enableCompass();
+  });
+
+  function toRad(d){return d*Math.PI/180;}
+  function toDeg(r){return r*180/Math.PI;}
+  function bearingDeg(lat1,lon1,lat2,lon2){
+    const phi1=toRad(lat1), phi2=toRad(lat2), dLon=toRad(lon2-lon1);
+    const y=Math.sin(dLon)*Math.cos(phi2);
+    const x=Math.cos(phi1)*Math.sin(phi2)-Math.sin(phi1)*Math.cos(phi2)*Math.cos(dLon);
+    return (toDeg(Math.atan2(y,x))+360)%360;
+  }
+  function distNm(lat1,lon1,lat2,lon2){
+    const R=3440.065;
+    const phi1=toRad(lat1), phi2=toRad(lat2), dPhi=toRad(lat2-lat1), dLon=toRad(lon2-lon1);
+    const a=Math.sin(dPhi/2)**2 + Math.cos(phi1)*Math.cos(phi2)*Math.sin(dLon/2)**2;
+    return R*2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a));
+  }
+  function angDiff(a,b){ const d = Math.abs(a-b)%360; return d>180 ? 360-d : d; }
+
+  function updateRingLabels(){
+    const r = state.radiusNm;
+    $('ringLabel1').textContent = (r/3).toFixed(0)+'nm';
+    $('ringLabel2').textContent = (r*2/3).toFixed(0)+'nm';
+    $('ringLabel3').textContent = r.toFixed(0)+'nm';
+    $('homeLabel').textContent = state.lat.toFixed(4)+', '+state.lon.toFixed(4)+' · '+r+'nm radius';
+  }
+
+  let sweepAngle = 0;
+  function animateSweep(){
+    sweepAngle = (sweepAngle + 2.2) % 360;
+    const g = $('sweep');
+    g.setAttribute('transform', 'rotate('+sweepAngle+' 150 150)');
+    const path = $('sweepPath');
+    const rad = toRad(sweepAngle-25);
+    // draw a wedge trailing behind the sweep line for a radar-sweep fade effect
+    const pts = [];
+    for(let a=-40;a<=0;a+=4){
+      const ang = toRad(sweepAngle+a-90);
+      pts.push([150+142*Math.cos(ang), 150+142*Math.sin(ang)]);
+    }
+    let d = 'M150,150 L'+pts.map(p=>p[0].toFixed(1)+','+p[1].toFixed(1)).join(' L')+' Z';
+    path.setAttribute('d', d);
+    requestAnimationFrame(animateSweep);
+  }
+
+  function setStatus(kind, text){
+    const dot = $('statusDot');
+    dot.className = 'dot' + (kind==='ok'?'':(' '+kind));
+    $('statusText').textContent = text;
+  }
+
+  function showBanner(text){
+    $('bannerText').textContent = text;
+    $('banner').classList.add('show');
+  }
+  function hideBanner(){ $('banner').classList.remove('show'); }
+
+  let notifPermAsked = false;
+  function maybeNotify(text){
+    if('Notification' in window){
+      if(Notification.permission === 'granted'){
+        try{ new Notification('Inbound Watch', {body:text}); }catch(e){}
+      } else if(Notification.permission !== 'denied' && !notifPermAsked){
+        notifPermAsked = true;
+        Notification.requestPermission();
+      }
+    }
+  }
+
+  function render(aircraft){
+    const blipsG = $('blips');
+    blipsG.innerHTML = '';
+    const listEl = $('list');
+    listEl.innerHTML = '';
+
+    if(!aircraft.length){
+      listEl.innerHTML = '<div class="empty">No traffic within '+state.radiusNm+'nm right now</div>';
+      hideBanner();
+      $('countText').textContent = '0 aircraft in range';
+      return;
+    }
+
+    const scale = 142 / state.radiusNm; // px per nm, ring at r=138 ~ edge
+    let inboundList = [];
+    const enriched = aircraft.map(ac=>{
+      const lat = ac.lat, lon = ac.lon;
+      const dist = distNm(state.lat, state.lon, lat, lon);
+      const brg = bearingDeg(state.lat, state.lon, lat, lon);
+      const track = (ac.track !== undefined && ac.track !== null) ? ac.track : null;
+      const brgToHome = (brg + 180) % 360;
+      let inbound = false;
+      if(track !== null){
+        inbound = angDiff(track, brgToHome) <= state.coneDeg;
+      }
+      const alt = ac.alt_baro !== undefined && ac.alt_baro !== 'ground' ? ac.alt_baro : (ac.alt_baro==='ground'?0:null);
+      const gs = ac.gs !== undefined ? ac.gs : null;
+      const eta = (inbound && gs && gs>5) ? (dist/gs*60) : null;
+      return {hex: ac.hex, call:(ac.flight||ac.r||ac.hex||'?????').trim(), type: ac.t||'', dist, brg, track, inbound, alt, gs, eta};
+    }).sort((a,b)=> a.dist - b.dist);
+
+    for(const e of enriched){
+      // plot on scope: bearing measured from north, clockwise; screen x=sin,y=-cos
+      const rPx = Math.min(142, e.dist*scale);
+      const rad = toRad(e.brg);
+      const x = 150 + rPx*Math.sin(rad);
+      const y = 150 - rPx*Math.cos(rad);
+      const trackRad = e.track!==null ? toRad(e.track) : rad;
+      const tx = x + 11*Math.sin(trackRad);
+      const ty = y - 11*Math.cos(trackRad);
+      const cls = e.inbound ? 'inbound' : 'normal';
+
+      const line = document.createElementNS('http://www.w3.org/2000/svg','line');
+      line.setAttribute('x1',x); line.setAttribute('y1',y);
+      line.setAttribute('x2',tx); line.setAttribute('y2',ty);
+      line.setAttribute('class','blip-track '+cls);
+      blipsG.appendChild(line);
+
+      const dot = document.createElementNS('http://www.w3.org/2000/svg','circle');
+      dot.setAttribute('cx',x); dot.setAttribute('cy',y); dot.setAttribute('r', e.inbound?4:2.6);
+      dot.setAttribute('class','blip '+(e.inbound?'blip-inbound':'blip-normal'));
+      blipsG.appendChild(dot);
+
+      const label = document.createElementNS('http://www.w3.org/2000/svg','text');
+      label.setAttribute('x', x+6); label.setAttribute('y', y-6);
+      label.setAttribute('class','blip-label '+cls);
+      label.textContent = e.call;
+      blipsG.appendChild(label);
+
+      const row = document.createElement('div');
+      row.className = 'row' + (e.inbound?' inbound':'');
+      row.innerHTML = '<span class="call">'+e.call+(e.type?'<span class="type">'+e.type+'</span>':'')+'</span>'+
+        '<span>'+e.dist.toFixed(1)+'nm</span>'+
+        '<span>'+(e.alt!==null? (e.alt/100).toFixed(0)+'00\'' : '—')+'</span>'+
+        '<span>'+(e.gs!==null? Math.round(e.gs)+'kt':'—')+'</span>'+
+        '<span class="badge">'+(e.inbound ? ('INBOUND'+(e.eta?' · '+e.eta.toFixed(0)+'m':'')) : 'transit')+'</span>';
+      listEl.appendChild(row);
+
+      if(e.inbound) inboundList.push(e);
+    }
+
+    $('countText').textContent = aircraft.length + ' aircraft in range';
+
+    // banner + notification for newly-inbound aircraft (avoid re-alerting every poll)
+    const now = Date.now();
+    let bannerSet = false;
+    for(const e of inboundList){
+      const prev = state.tracked[e.hex];
+      const closing = prev ? (e.dist < prev.lastDist - 0.05) : true;
+      if(closing && (!prev || !prev.alertedAt || now - prev.alertedAt > 90000)){
+        const msg = e.call+' inbound, '+e.dist.toFixed(1)+'nm out'+(e.eta?', ~'+e.eta.toFixed(0)+' min':'');
+        showBanner(msg);
+        maybeNotify(msg);
+        state.tracked[e.hex] = {lastDist: e.dist, alertedAt: now};
+        bannerSet = true;
+      } else {
+        state.tracked[e.hex] = {lastDist: e.dist, alertedAt: prev?prev.alertedAt:0};
+      }
+    }
+    if(!bannerSet && inboundList.length===0) hideBanner();
+    // prune stale tracked hexes
+    const seen = new Set(aircraft.map(a=>a.hex));
+    for(const h of Object.keys(state.tracked)) if(!seen.has(h)) delete state.tracked[h];
+  }
+
+  let pollTimer = null;
+  async function poll(){
+    const urls = [
+      'https://api.airplanes.live/v2/point/'+state.lat+'/'+state.lon+'/'+state.radiusNm,
+      'https://api.adsb.one/v2/point/'+state.lat+'/'+state.lon+'/'+state.radiusNm
+    ];
+    let lastErr = null;
+    for(const url of urls){
+      try{
+        const res = await fetch(url, {cache:'no-store'});
+        if(!res.ok) throw new Error('HTTP '+res.status);
+        const data = await res.json();
+        const aircraft = (data.ac || data.aircraft || []).filter(a=> a.lat!==undefined && a.lon!==undefined);
+        setStatus('ok', 'live · updated '+new Date().toLocaleTimeString());
+        render(aircraft);
+        return;
+      }catch(e){ lastErr = e; }
+    }
+    setStatus('err', 'connection error — retrying');
+  }
+
+  function restartPolling(){
+    if(pollTimer) clearInterval(pollTimer);
+    poll();
+    pollTimer = setInterval(poll, state.pollSec*1000);
+  }
+
+  loadSettings();
+  updateRingLabels();
+  animateSweep();
+  restartPolling();
+})();
+</script>
+</body>
+</html>
