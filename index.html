@@ -42,6 +42,15 @@
   .status-bar .dot.stale{background:var(--amber);box-shadow:0 0 6px var(--amber);}
   .status-bar .dot.err{background:var(--red);box-shadow:0 0 6px var(--red);}
 
+  .ceiling-row{display:flex;align-items:center;gap:8px;background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:8px 10px;margin-bottom:10px;}
+  .ceiling-row label{font-size:11px;color:var(--text-faint);font-family:var(--font-mono);white-space:nowrap;}
+  .ceiling-row input{width:80px;background:var(--panel-raised);border:1px solid var(--border-bright);color:var(--text);border-radius:6px;padding:6px 8px;font-family:var(--font-mono);font-size:13px;}
+  .ceiling-row input:disabled{opacity:0.4;}
+  .ceiling-row .unit{font-size:11px;color:var(--text-faint);}
+  .ceiling-row .spacer{flex:1;}
+  .nolimit-btn{background:var(--panel-raised);border:1px solid var(--border-bright);color:var(--text-dim);border-radius:6px;padding:6px 10px;font-size:11px;font-weight:700;font-family:var(--font-mono);}
+  .nolimit-btn.on{background:var(--amber-dim);border-color:var(--amber);color:var(--amber);}
+
   .scope-wrap{position:relative;width:100%;aspect-ratio:1/1;background:radial-gradient(circle at 50% 50%, #0f1613 0%, #0a0f0d 100%);border:1px solid var(--border);border-radius:16px;overflow:hidden;margin-bottom:12px;}
   svg.scope{width:100%;height:100%;display:block;}
   .ring{fill:none;stroke:var(--border-bright);stroke-width:1;opacity:0.55;}
@@ -106,6 +115,14 @@
     <div id="countText">0 aircraft in range</div>
   </div>
 
+  <div class="ceiling-row">
+    <label>Alert ceiling</label>
+    <input id="aglQuick" inputmode="numeric" value="1400">
+    <span class="unit">ft AGL</span>
+    <div class="spacer"></div>
+    <button class="nolimit-btn" id="noLimitBtn">No limit</button>
+  </div>
+
   <div class="banner" id="banner"><span class="icon">✈</span><span id="bannerText"></span></div>
 
   <div class="settings" id="settings">
@@ -117,6 +134,7 @@
       <div class="lbl">Rotate display to match facing<span class="sub2" id="compassStatus">off — north stays up</span></div>
       <button class="toggle-btn" id="compassToggle">Enable</button>
     </div>
+    <div class="field"><label>Compass calibration offset (°, + or -)</label><input id="compassOffset" inputmode="numeric" value="0"></div>
     <div class="row2">
       <div class="field"><label>Home latitude</label><input id="lat" inputmode="decimal" value="27.5986"></div>
       <div class="field"><label>Home longitude</label><input id="lon" inputmode="decimal" value="-80.5020"></div>
@@ -125,9 +143,10 @@
       <div class="field"><label>Search radius (nm)</label><input id="radius" inputmode="numeric" value="15"></div>
       <div class="field"><label>Inbound cone (° ± )</label><input id="cone" inputmode="numeric" value="25"></div>
     </div>
+    <div class="field"><label>Fallback elevation (ft MSL)</label><input id="fieldElev" inputmode="numeric" value="25"></div>
     <div class="field"><label>Poll interval (seconds, min 3)</label><input id="poll" inputmode="numeric" value="6"></div>
     <button class="btn" id="saveSettings">Save</button>
-    <div class="hint">Default home is set to FL74 (Indian River Aerodrome), 27.5986, -80.5020. Data from airplanes.live's free public ADS-B API — no key needed, non-commercial use, ~1 request/sec limit. Alerts only fire while this tab is open and in the foreground. Location and compass require this page to be loaded over https — they won't work from a downloaded file opened directly.</div>
+    <div class="hint">Home now defaults to your iPhone's live GPS location (disable "Use my current location" to pin it to FL74 or any manual coordinates instead). AGL is estimated as reported barometric altitude minus a reference elevation: when GPS is on and the phone reports an altitude reading, that's used automatically; otherwise it falls back to the fixed elevation below. This is an approximation, not a precise AGL reading — phone GPS altitude in particular can be noisy. Data from airplanes.live's free public ADS-B API — no key needed, non-commercial use, ~1 request/sec limit. Alerts only fire while this tab is open and in the foreground. Location and compass require this page to be loaded over https — they won't work from a downloaded file opened directly. If the compass rose doesn't line up with real-world north, point the phone at something with a known bearing and adjust the calibration offset until N lines up correctly, then Save.</div>
   </div>
 
   <div class="scope-wrap">
@@ -171,7 +190,8 @@
   const $ = (id) => document.getElementById(id);
   let state = {
     lat: 27.5986, lon: -80.5020, radiusNm: 15, coneDeg: 25, pollSec: 6,
-    useGps: false, compassMode: false, heading: 0,
+    useGps: true, compassMode: false, heading: 0, compassOffset: 0,
+    aglMax: 1400, fieldElevFt: 25, phoneAltFt: null, aglFilterOn: true,
     tracked: {}, // hex -> {lastDist, alertedAt}
   };
   let gpsWatchId = null;
@@ -185,6 +205,9 @@
     manualLat = state.lat; manualLon = state.lon;
     $('lat').value = state.lat; $('lon').value = state.lon;
     $('radius').value = state.radiusNm; $('cone').value = state.coneDeg; $('poll').value = state.pollSec;
+    $('compassOffset').value = state.compassOffset;
+    $('aglQuick').value = state.aglMax; $('fieldElev').value = state.fieldElevFt;
+    setNoLimitUi(!state.aglFilterOn);
     if(state.useGps) startGps(); else setGpsUi(false);
   }
   function saveSettings(){
@@ -196,7 +219,10 @@
     state.radiusNm = Math.max(2, parseFloat($('radius').value)||15);
     state.coneDeg = Math.max(5, parseFloat($('cone').value)||25);
     state.pollSec = Math.max(3, parseFloat($('poll').value)||6);
-    localStorage.setItem('iw_settings', JSON.stringify({lat:manualLat,lon:manualLon,radiusNm:state.radiusNm,coneDeg:state.coneDeg,pollSec:state.pollSec,useGps:state.useGps}));
+    state.compassOffset = ((parseFloat($('compassOffset').value)||0) % 360 + 360) % 360;
+    state.aglMax = Math.max(0, parseFloat($('aglQuick').value)||1400);
+    state.fieldElevFt = parseFloat($('fieldElev').value)||0;
+    localStorage.setItem('iw_settings', JSON.stringify({lat:manualLat,lon:manualLon,radiusNm:state.radiusNm,coneDeg:state.coneDeg,pollSec:state.pollSec,useGps:state.useGps,compassOffset:state.compassOffset,aglMax:state.aglMax,fieldElevFt:state.fieldElevFt,aglFilterOn:state.aglFilterOn}));
     updateRingLabels();
     $('settings').classList.remove('show');
     restartPolling();
@@ -204,6 +230,24 @@
 
   $('gearBtn').addEventListener('click', ()=> $('settings').classList.toggle('show'));
   $('saveSettings').addEventListener('click', saveSettings);
+
+  function persistQuick(){
+    localStorage.setItem('iw_settings', JSON.stringify({lat:manualLat,lon:manualLon,radiusNm:state.radiusNm,coneDeg:state.coneDeg,pollSec:state.pollSec,useGps:state.useGps,compassOffset:state.compassOffset,aglMax:state.aglMax,fieldElevFt:state.fieldElevFt,aglFilterOn:state.aglFilterOn}));
+  }
+  function setNoLimitUi(on){
+    $('noLimitBtn').textContent = on ? 'No limit ✓' : 'No limit';
+    $('noLimitBtn').className = 'nolimit-btn' + (on?' on':'');
+    $('aglQuick').disabled = on;
+  }
+  $('aglQuick').addEventListener('change', ()=>{
+    state.aglMax = Math.max(0, parseFloat($('aglQuick').value)||1400);
+    persistQuick();
+  });
+  $('noLimitBtn').addEventListener('click', ()=>{
+    state.aglFilterOn = !state.aglFilterOn;
+    setNoLimitUi(!state.aglFilterOn);
+    persistQuick();
+  });
 
   function setGpsUi(on, msg){
     $('gpsToggle').textContent = on ? 'Disable' : 'Enable';
@@ -221,11 +265,18 @@
     gpsWatchId = navigator.geolocation.watchPosition(
       (pos)=>{
         state.lat = pos.coords.latitude; state.lon = pos.coords.longitude;
-        setGpsUi(true, 'live — accurate to ~'+Math.round(pos.coords.accuracy)+'m');
+        if(typeof pos.coords.altitude === 'number' && pos.coords.altitude !== null){
+          state.phoneAltFt = pos.coords.altitude * 3.28084;
+        } else {
+          state.phoneAltFt = null;
+        }
+        const altNote = state.phoneAltFt !== null ? ', alt '+Math.round(state.phoneAltFt)+'ft' : ', no device altitude';
+        setGpsUi(true, 'live — accurate to ~'+Math.round(pos.coords.accuracy)+'m'+altNote);
         updateRingLabels();
       },
       (err)=>{
         state.useGps = false;
+        state.phoneAltFt = null;
         setGpsUi(false, 'denied/unavailable ('+err.message+') — using coordinates below');
         state.lat = manualLat; state.lon = manualLon;
         updateRingLabels();
@@ -250,14 +301,21 @@
     $('compassToggle').className = 'toggle-btn' + (on?' on':'');
     $('compassStatus').textContent = msg || (on ? 'on — facing direction stays up' : 'off — north stays up');
   }
+  let lastHeadingUiUpdate = 0;
   function onOrientation(ev){
-    let h = null;
-    if(typeof ev.webkitCompassHeading === 'number'){ h = ev.webkitCompassHeading; }
-    else if(ev.absolute && ev.alpha !== null){ h = (360 - ev.alpha) % 360; }
-    if(h !== null){
+    let raw = null;
+    if(typeof ev.webkitCompassHeading === 'number'){ raw = ev.webkitCompassHeading; }
+    else if(ev.absolute && ev.alpha !== null){ raw = (360 - ev.alpha) % 360; }
+    if(raw !== null){
+      const h = (raw + state.compassOffset + 360) % 360;
       state.heading = h;
       const rg = $('rotGroup');
       if(state.compassMode) rg.setAttribute('transform', 'rotate('+(-h)+' 150 150)');
+      const now = Date.now();
+      if(state.compassMode && now - lastHeadingUiUpdate > 400){
+        lastHeadingUiUpdate = now;
+        setCompassUi(true, 'on — raw '+raw.toFixed(0)+'°, offset '+state.compassOffset+'° → showing '+h.toFixed(0)+'°');
+      }
     }
   }
   function enableCompass(){
@@ -376,14 +434,15 @@
       const brg = bearingDeg(state.lat, state.lon, lat, lon);
       const track = (ac.track !== undefined && ac.track !== null) ? ac.track : null;
       const brgToHome = (brg + 180) % 360;
-      let inbound = false;
-      if(track !== null){
-        inbound = angDiff(track, brgToHome) <= state.coneDeg;
-      }
       const alt = ac.alt_baro !== undefined && ac.alt_baro !== 'ground' ? ac.alt_baro : (ac.alt_baro==='ground'?0:null);
+      const refElevFt = (state.useGps && state.phoneAltFt !== null) ? state.phoneAltFt : state.fieldElevFt;
+      const agl = (alt !== null) ? (alt - refElevFt) : null;
+      const headingMatch = (track !== null) && (angDiff(track, brgToHome) <= state.coneDeg);
+      const lowEnough = (!state.aglFilterOn || agl === null) ? true : (agl <= state.aglMax);
+      const inbound = headingMatch && lowEnough;
       const gs = ac.gs !== undefined ? ac.gs : null;
       const eta = (inbound && gs && gs>5) ? (dist/gs*60) : null;
-      return {hex: ac.hex, call:(ac.flight||ac.r||ac.hex||'?????').trim(), type: ac.t||'', dist, brg, track, inbound, alt, gs, eta};
+      return {hex: ac.hex, call:(ac.flight||ac.r||ac.hex||'?????').trim(), type: ac.t||'', dist, brg, track, inbound, alt, agl, gs, eta};
     }).sort((a,b)=> a.dist - b.dist);
 
     for(const e of enriched){
