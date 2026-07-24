@@ -67,6 +67,11 @@
   .blip-track.normal{stroke:var(--text-faint);}
   .blip-label{font-family:var(--font-mono);font-size:8.5px;fill:var(--text-dim);}
   .blip-label.inbound{fill:var(--red);font-weight:700;}
+  .apt-marker{fill:none;stroke:var(--amber);stroke-width:1.3;}
+  .apt-label{font-family:var(--font-mono);font-size:8px;fill:var(--amber);font-weight:700;}
+  .apt-row{display:grid;grid-template-columns:1fr 0.7fr 0.6fr;align-items:center;background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:7px 10px;margin-bottom:6px;font-family:var(--font-mono);font-size:11.5px;}
+  .apt-row .nm2{color:var(--amber);font-weight:700;}
+  .apt-row .full{display:block;font-size:9.5px;color:var(--text-faint);font-weight:400;}
 
   .banner{display:none;padding:10px 12px;border-radius:10px;background:var(--red-dim);border:1px solid var(--red);color:#ffd9cd;font-size:13px;font-weight:600;margin-bottom:12px;align-items:center;gap:8px;}
   .banner.show{display:flex;}
@@ -134,6 +139,14 @@
       <div class="lbl">Rotate display to match facing<span class="sub2" id="compassStatus">off — north stays up</span></div>
       <button class="toggle-btn" id="compassToggle">Enable</button>
     </div>
+    <div class="toggle-row">
+      <div class="lbl">Show nearby airports<span class="sub2" id="aptStatus">on — loading airport data…</span></div>
+      <button class="toggle-btn" id="aptToggle">Disable</button>
+    </div>
+    <div class="toggle-row">
+      <div class="lbl">Include heliports / seaplane bases<span class="sub2">off — fixed-wing airports only</span></div>
+      <button class="toggle-btn" id="aptHeliToggle">Enable</button>
+    </div>
     <div class="field"><label>Compass calibration offset (°, + or -)</label><input id="compassOffset" inputmode="numeric" value="0"></div>
     <div class="row2">
       <div class="field"><label>Home latitude</label><input id="lat" inputmode="decimal" value="27.5986"></div>
@@ -146,7 +159,7 @@
     <div class="field"><label>Fallback elevation (ft MSL)</label><input id="fieldElev" inputmode="numeric" value="25"></div>
     <div class="field"><label>Poll interval (seconds, min 3)</label><input id="poll" inputmode="numeric" value="6"></div>
     <button class="btn" id="saveSettings">Save</button>
-    <div class="hint">Home now defaults to your iPhone's live GPS location (disable "Use my current location" to pin it to FL74 or any manual coordinates instead). AGL is estimated as reported barometric altitude minus a reference elevation: when GPS is on and the phone reports an altitude reading, that's used automatically; otherwise it falls back to the fixed elevation below. This is an approximation, not a precise AGL reading — phone GPS altitude in particular can be noisy. Data from airplanes.live's free public ADS-B API — no key needed, non-commercial use, ~1 request/sec limit. Alerts only fire while this tab is open and in the foreground. Location and compass require this page to be loaded over https — they won't work from a downloaded file opened directly. If the compass rose doesn't line up with real-world north, point the phone at something with a known bearing and adjust the calibration offset until N lines up correctly, then Save.</div>
+    <div class="hint">Home now defaults to your iPhone's live GPS location (disable "Use my current location" to pin it to FL74 or any manual coordinates instead). AGL is estimated as reported barometric altitude minus a reference elevation: when GPS is on and the phone reports an altitude reading, that's used automatically; otherwise it falls back to the fixed elevation below. This is an approximation, not a precise AGL reading — phone GPS altitude in particular can be noisy. Nearby airports come from the OurAirports public-domain database, US airports only, cached on-device after the first load so it doesn't re-download every time. Data from airplanes.live's free public ADS-B API — no key needed, non-commercial use, ~1 request/sec limit. Alerts only fire while this tab is open and in the foreground. Location and compass require this page to be loaded over https — they won't work from a downloaded file opened directly. If the compass rose doesn't line up with real-world north, point the phone at something with a known bearing and adjust the calibration offset until N lines up correctly, then Save.</div>
   </div>
 
   <div class="scope-wrap">
@@ -175,6 +188,7 @@
         <text x="150" y="285" class="compass-label" id="cS">S</text>
         <text x="20" y="154" class="compass-label" id="cW">W</text>
         <g id="blips"></g>
+        <g id="aptBlips"></g>
       </g>
       <circle cx="150" cy="150" r="4" class="home-dot"/>
       <text x="150" y="9" class="facing-mark" id="facingMark"></text>
@@ -183,6 +197,9 @@
 
   <div class="list-head"><span>CALLSIGN</span><span>DIST</span><span>ALT</span><span>GS</span><span>STATUS</span></div>
   <div id="list"></div>
+
+  <div class="list-head" id="aptListHead" style="display:none;"><span>NEARBY AIRPORTS</span><span>DIST</span><span>DIR</span></div>
+  <div id="aptList"></div>
 </div>
 
 <script>
@@ -192,8 +209,10 @@
     lat: 27.5986, lon: -80.5020, radiusNm: 15, coneDeg: 25, pollSec: 6,
     useGps: true, compassMode: false, heading: 0, compassOffset: 0,
     aglMax: 1400, fieldElevFt: 25, phoneAltFt: null, aglFilterOn: true,
+    showAirports: true, includeHeli: false,
     tracked: {}, // hex -> {lastDist, alertedAt}
   };
+  let airportsData = null; // full parsed US airports array, loaded once
   let gpsWatchId = null;
   let manualLat = state.lat, manualLon = state.lon;
 
@@ -208,6 +227,9 @@
     $('compassOffset').value = state.compassOffset;
     $('aglQuick').value = state.aglMax; $('fieldElev').value = state.fieldElevFt;
     setNoLimitUi(!state.aglFilterOn);
+    setAptToggleUi(state.showAirports);
+    setAptHeliUi(state.includeHeli);
+    if(state.showAirports) loadAirports();
     if(state.useGps) startGps(); else setGpsUi(false);
   }
   function saveSettings(){
@@ -222,7 +244,7 @@
     state.compassOffset = ((parseFloat($('compassOffset').value)||0) % 360 + 360) % 360;
     state.aglMax = Math.max(0, parseFloat($('aglQuick').value)||1400);
     state.fieldElevFt = parseFloat($('fieldElev').value)||0;
-    localStorage.setItem('iw_settings', JSON.stringify({lat:manualLat,lon:manualLon,radiusNm:state.radiusNm,coneDeg:state.coneDeg,pollSec:state.pollSec,useGps:state.useGps,compassOffset:state.compassOffset,aglMax:state.aglMax,fieldElevFt:state.fieldElevFt,aglFilterOn:state.aglFilterOn}));
+    localStorage.setItem('iw_settings', JSON.stringify({lat:manualLat,lon:manualLon,radiusNm:state.radiusNm,coneDeg:state.coneDeg,pollSec:state.pollSec,useGps:state.useGps,compassOffset:state.compassOffset,aglMax:state.aglMax,fieldElevFt:state.fieldElevFt,aglFilterOn:state.aglFilterOn,showAirports:state.showAirports,includeHeli:state.includeHeli}));
     updateRingLabels();
     $('settings').classList.remove('show');
     restartPolling();
@@ -232,7 +254,7 @@
   $('saveSettings').addEventListener('click', saveSettings);
 
   function persistQuick(){
-    localStorage.setItem('iw_settings', JSON.stringify({lat:manualLat,lon:manualLon,radiusNm:state.radiusNm,coneDeg:state.coneDeg,pollSec:state.pollSec,useGps:state.useGps,compassOffset:state.compassOffset,aglMax:state.aglMax,fieldElevFt:state.fieldElevFt,aglFilterOn:state.aglFilterOn}));
+    localStorage.setItem('iw_settings', JSON.stringify({lat:manualLat,lon:manualLon,radiusNm:state.radiusNm,coneDeg:state.coneDeg,pollSec:state.pollSec,useGps:state.useGps,compassOffset:state.compassOffset,aglMax:state.aglMax,fieldElevFt:state.fieldElevFt,aglFilterOn:state.aglFilterOn,showAirports:state.showAirports,includeHeli:state.includeHeli}));
   }
   function setNoLimitUi(on){
     $('noLimitBtn').textContent = on ? 'No limit ✓' : 'No limit';
@@ -248,6 +270,150 @@
     setNoLimitUi(!state.aglFilterOn);
     persistQuick();
   });
+
+  function setAptToggleUi(on){
+    $('aptToggle').textContent = on ? 'Disable' : 'Enable';
+    $('aptToggle').className = 'toggle-btn' + (on?' on':'');
+  }
+  function setAptHeliUi(on){
+    $('aptHeliToggle').textContent = on ? 'Disable' : 'Enable';
+    $('aptHeliToggle').className = 'toggle-btn' + (on?' on':'');
+  }
+  $('aptToggle').addEventListener('click', ()=>{
+    state.showAirports = !state.showAirports;
+    setAptToggleUi(state.showAirports);
+    persistQuick();
+    if(state.showAirports && !airportsData) loadAirports();
+    if(!state.showAirports){ $('aptBlips').innerHTML=''; $('aptList').innerHTML=''; $('aptListHead').style.display='none'; }
+  });
+  $('aptHeliToggle').addEventListener('click', ()=>{
+    state.includeHeli = !state.includeHeli;
+    setAptHeliUi(state.includeHeli);
+    persistQuick();
+  });
+
+  // --- Nearby airports: OurAirports public-domain US dataset, loaded once and cached ---
+  function parseCsvLine(line){
+    const out = []; let cur = ''; let inQ = false;
+    for(let i=0;i<line.length;i++){
+      const c = line[i];
+      if(inQ){
+        if(c === '"'){ if(line[i+1] === '"'){ cur+='"'; i++; } else { inQ = false; } }
+        else cur += c;
+      } else {
+        if(c === '"') inQ = true;
+        else if(c === ','){ out.push(cur); cur=''; }
+        else cur += c;
+      }
+    }
+    out.push(cur);
+    return out;
+  }
+  function parseAirportsCsv(text){
+    const lines = text.split('\n');
+    if(!lines.length) return [];
+    const header = parseCsvLine(lines[0]);
+    const idx = {};
+    header.forEach((h,i)=> idx[h.trim()] = i);
+    const list = [];
+    for(let i=1;i<lines.length;i++){
+      const line = lines[i];
+      if(!line || !line.trim()) continue;
+      const cols = parseCsvLine(line);
+      const type = cols[idx.type];
+      if(!type || type === 'closed_airport') continue;
+      const lat = parseFloat(cols[idx.latitude_deg]);
+      const lon = parseFloat(cols[idx.longitude_deg]);
+      if(!isFinite(lat) || !isFinite(lon)) continue;
+      list.push({
+        ident: cols[idx.ident] || '',
+        icao: cols[idx.icao_code] || '',
+        name: (cols[idx.name] || '').replace(/^"|"$/g,''),
+        type: type,
+        lat, lon,
+        elev: parseFloat(cols[idx.elevation_ft]) || null,
+      });
+    }
+    return list;
+  }
+  async function loadAirports(){
+    $('aptStatus').textContent = 'on — loading airport data…';
+    const cacheKey = 'iw_airports_us_v1';
+    try{
+      const cached = localStorage.getItem(cacheKey);
+      if(cached){
+        const obj = JSON.parse(cached);
+        if(obj.ts && (Date.now() - obj.ts) < 1000*60*60*24*30){
+          airportsData = obj.data;
+          $('aptStatus').textContent = 'on — '+airportsData.length+' US airports loaded (cached)';
+          renderAirports();
+          return;
+        }
+      }
+    }catch(e){}
+    try{
+      const res = await fetch('https://ourairports.com/countries/US/airports.csv', {cache:'no-store'});
+      if(!res.ok) throw new Error('HTTP '+res.status);
+      const text = await res.text();
+      airportsData = parseAirportsCsv(text);
+      $('aptStatus').textContent = 'on — '+airportsData.length+' US airports loaded';
+      try{ localStorage.setItem(cacheKey, JSON.stringify({ts:Date.now(), data:airportsData})); }catch(e){}
+      renderAirports();
+    }catch(e){
+      $('aptStatus').textContent = 'on — could not load airport data (offline?)';
+    }
+  }
+  function compass16(brg){
+    const dirs = ['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'];
+    return dirs[Math.round(brg/22.5) % 16];
+  }
+  function renderAirports(){
+    const g = $('aptBlips');
+    g.innerHTML = '';
+    const listEl = $('aptList');
+    listEl.innerHTML = '';
+    $('aptListHead').style.display = 'none';
+    if(!state.showAirports || !airportsData) return;
+    const scale = 142 / state.radiusNm;
+    const nearby = airportsData
+      .filter(a => state.includeHeli || (a.type !== 'heliport' && a.type !== 'seaplane_base'))
+      .map(a=>{
+        const dist = distNm(state.lat, state.lon, a.lat, a.lon);
+        const brg = bearingDeg(state.lat, state.lon, a.lat, a.lon);
+        return {...a, dist, brg};
+      })
+      .filter(a => a.dist <= state.radiusNm)
+      .sort((a,b)=> a.dist - b.dist);
+
+    if(!nearby.length) return;
+    $('aptListHead').style.display = 'grid';
+
+    for(const a of nearby){
+      const rPx = Math.min(142, a.dist*scale);
+      const rad = toRad(a.brg);
+      const x = 150 + rPx*Math.sin(rad);
+      const y = 150 - rPx*Math.cos(rad);
+
+      const mark = document.createElementNS('http://www.w3.org/2000/svg','path');
+      const s = 4.5;
+      mark.setAttribute('d', 'M'+x+','+(y-s)+' L'+(x+s)+','+y+' L'+x+','+(y+s)+' L'+(x-s)+','+y+' Z');
+      mark.setAttribute('class','apt-marker');
+      g.appendChild(mark);
+
+      const label = document.createElementNS('http://www.w3.org/2000/svg','text');
+      label.setAttribute('x', x+6); label.setAttribute('y', y+3);
+      label.setAttribute('class','apt-label');
+      label.textContent = a.icao || a.ident;
+      g.appendChild(label);
+
+      const row = document.createElement('div');
+      row.className = 'apt-row';
+      row.innerHTML = '<span>'+(a.icao||a.ident)+'<span class="full">'+a.name+'</span></span>'+
+        '<span class="nm2">'+a.dist.toFixed(1)+'nm</span>'+
+        '<span>'+compass16(a.brg)+'</span>';
+      listEl.appendChild(row);
+    }
+  }
 
   function setGpsUi(on, msg){
     $('gpsToggle').textContent = on ? 'Disable' : 'Enable';
@@ -414,6 +580,7 @@
   }
 
   function render(aircraft){
+    renderAirports();
     const blipsG = $('blips');
     blipsG.innerHTML = '';
     const listEl = $('list');
