@@ -147,13 +147,17 @@
       <div class="lbl">Include heliports / seaplane bases<span class="sub2">off — fixed-wing airports only</span></div>
       <button class="toggle-btn" id="aptHeliToggle">Enable</button>
     </div>
+    <div class="toggle-row">
+      <div class="lbl">Hide unregistered/placeholder codes<span class="sub2">on — hides entries like "US-11283" with no real chart code</span></div>
+      <button class="toggle-btn" id="aptPlaceholderToggle">Disable</button>
+    </div>
     <div class="field"><label>Compass calibration offset (°, + or -)</label><input id="compassOffset" inputmode="numeric" value="0"></div>
     <div class="row2">
       <div class="field"><label>Home latitude</label><input id="lat" inputmode="decimal" value="27.5986"></div>
       <div class="field"><label>Home longitude</label><input id="lon" inputmode="decimal" value="-80.5020"></div>
     </div>
     <div class="row2">
-      <div class="field"><label>Search radius (nm)</label><input id="radius" inputmode="numeric" value="15"></div>
+      <div class="field"><label>Search radius (nm)</label><input id="radius" inputmode="numeric" value="10"></div>
       <div class="field"><label>Inbound cone (° ± )</label><input id="cone" inputmode="numeric" value="25"></div>
     </div>
     <div class="field"><label>Fallback elevation (ft MSL)</label><input id="fieldElev" inputmode="numeric" value="25"></div>
@@ -206,10 +210,10 @@
 (function(){
   const $ = (id) => document.getElementById(id);
   let state = {
-    lat: 27.5986, lon: -80.5020, radiusNm: 15, coneDeg: 25, pollSec: 6,
+    lat: 27.5986, lon: -80.5020, radiusNm: 10, coneDeg: 25, pollSec: 6,
     useGps: true, compassMode: false, heading: 0, compassOffset: 0,
     aglMax: 1400, fieldElevFt: 25, phoneAltFt: null, aglFilterOn: true,
-    showAirports: true, includeHeli: false,
+    showAirports: true, includeHeli: false, hidePlaceholder: true,
     tracked: {}, // hex -> {lastDist, alertedAt}
   };
   let airportsData = null; // full parsed US airports array, loaded once
@@ -229,6 +233,7 @@
     setNoLimitUi(!state.aglFilterOn);
     setAptToggleUi(state.showAirports);
     setAptHeliUi(state.includeHeli);
+    setAptPlaceholderUi(state.hidePlaceholder);
     if(state.showAirports) loadAirports();
     if(state.useGps) startGps(); else setGpsUi(false);
   }
@@ -238,13 +243,13 @@
       state.lon = parseFloat($('lon').value)||state.lon;
       manualLat = state.lat; manualLon = state.lon;
     }
-    state.radiusNm = Math.max(2, parseFloat($('radius').value)||15);
+    state.radiusNm = Math.max(2, parseFloat($('radius').value)||10);
     state.coneDeg = Math.max(5, parseFloat($('cone').value)||25);
     state.pollSec = Math.max(3, parseFloat($('poll').value)||6);
     state.compassOffset = ((parseFloat($('compassOffset').value)||0) % 360 + 360) % 360;
     state.aglMax = Math.max(0, parseFloat($('aglQuick').value)||1400);
     state.fieldElevFt = parseFloat($('fieldElev').value)||0;
-    localStorage.setItem('iw_settings', JSON.stringify({lat:manualLat,lon:manualLon,radiusNm:state.radiusNm,coneDeg:state.coneDeg,pollSec:state.pollSec,useGps:state.useGps,compassOffset:state.compassOffset,aglMax:state.aglMax,fieldElevFt:state.fieldElevFt,aglFilterOn:state.aglFilterOn,showAirports:state.showAirports,includeHeli:state.includeHeli}));
+    localStorage.setItem('iw_settings', JSON.stringify({lat:manualLat,lon:manualLon,radiusNm:state.radiusNm,coneDeg:state.coneDeg,pollSec:state.pollSec,useGps:state.useGps,compassOffset:state.compassOffset,aglMax:state.aglMax,fieldElevFt:state.fieldElevFt,aglFilterOn:state.aglFilterOn,showAirports:state.showAirports,includeHeli:state.includeHeli,hidePlaceholder:state.hidePlaceholder}));
     updateRingLabels();
     $('settings').classList.remove('show');
     restartPolling();
@@ -254,7 +259,7 @@
   $('saveSettings').addEventListener('click', saveSettings);
 
   function persistQuick(){
-    localStorage.setItem('iw_settings', JSON.stringify({lat:manualLat,lon:manualLon,radiusNm:state.radiusNm,coneDeg:state.coneDeg,pollSec:state.pollSec,useGps:state.useGps,compassOffset:state.compassOffset,aglMax:state.aglMax,fieldElevFt:state.fieldElevFt,aglFilterOn:state.aglFilterOn,showAirports:state.showAirports,includeHeli:state.includeHeli}));
+    localStorage.setItem('iw_settings', JSON.stringify({lat:manualLat,lon:manualLon,radiusNm:state.radiusNm,coneDeg:state.coneDeg,pollSec:state.pollSec,useGps:state.useGps,compassOffset:state.compassOffset,aglMax:state.aglMax,fieldElevFt:state.fieldElevFt,aglFilterOn:state.aglFilterOn,showAirports:state.showAirports,includeHeli:state.includeHeli,hidePlaceholder:state.hidePlaceholder}));
   }
   function setNoLimitUi(on){
     $('noLimitBtn').textContent = on ? 'No limit ✓' : 'No limit';
@@ -290,6 +295,16 @@
     state.includeHeli = !state.includeHeli;
     setAptHeliUi(state.includeHeli);
     persistQuick();
+  });
+  function setAptPlaceholderUi(on){
+    $('aptPlaceholderToggle').textContent = on ? 'Disable' : 'Enable';
+    $('aptPlaceholderToggle').className = 'toggle-btn' + (on?' on':'');
+  }
+  $('aptPlaceholderToggle').addEventListener('click', ()=>{
+    state.hidePlaceholder = !state.hidePlaceholder;
+    setAptPlaceholderUi(state.hidePlaceholder);
+    persistQuick();
+    renderAirports();
   });
 
   // --- Nearby airports: OurAirports public-domain US dataset, loaded once and cached ---
@@ -377,6 +392,7 @@
     const scale = 142 / state.radiusNm;
     const nearby = airportsData
       .filter(a => state.includeHeli || (a.type !== 'heliport' && a.type !== 'seaplane_base'))
+      .filter(a => !state.hidePlaceholder || !/^[A-Z]{2}-\d+$/.test(a.ident))
       .map(a=>{
         const dist = distNm(state.lat, state.lon, a.lat, a.lon);
         const brg = bearingDeg(state.lat, state.lon, a.lat, a.lon);
